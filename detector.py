@@ -63,7 +63,7 @@ class RefrigeratorMonitor:
             "Mango": "Fruits",
         }
 
-    def detect_items_from_frame(self, frame):
+    def detect_items_from_frame(self, frame, max_labels=20, min_confidence=70):
         global current_detected_items
         success, buffer = cv2.imencode(".jpg", frame)
         if not success:
@@ -73,8 +73,8 @@ class RefrigeratorMonitor:
         try:
             response = self.rekognition_client.detect_labels(
                 Image={"Bytes": binary_image},
-                MaxLabels=20,
-                MinConfidence=70,
+                MaxLabels=max_labels,
+                MinConfidence=min_confidence,
             )
             detected_items = {}
 
@@ -164,33 +164,99 @@ def open_camera():
 @app.route("/detect", methods=["GET"])
 def detect_items():
     global current_camera
+    max_labels = int(request.args.get('max_labels', 20))  # Default to 20 if not specified
+    min_confidence = float(request.args.get('min_confidence', 70))  # Default to 70 if not specified
+
     if current_camera is None or not current_camera.isOpened():
         return jsonify({"error": "Camera is not open. Use /open-camera first."}), 500
+    
     ret, frame = current_camera.read()
     if not ret:
         return jsonify({"error": "Failed to capture image from camera"}), 500
+    
+    # Resize frame to match Rekognition's expected input
     frame = cv2.resize(frame, (640, 480))
-    detected_items = monitor.detect_items_from_frame(frame)
+
+    # Detect items from the frame using AWS Rekognition
+    detected_items = monitor.detect_items_from_frame(frame, max_labels, min_confidence)
+
+    # Process detected items and update the quantities correctly
+    updated_items = {}  # Temporary dictionary to hold updated items
+
+    for item in detected_items:
+        item_name = item["name"]
+        detected_quantity = item["quantity"]
+
+        # Debugging: Print the detected item and quantity
+        print(f"Detected Item: {item_name}, Quantity: {detected_quantity}")
+        
+        # Check if a query parameter for this item exists
+        query_quantity = request.args.get(f"quantity_{item_name}")
+        if query_quantity:
+            print(f"Found query parameter for {item_name}: {query_quantity}")
+            detected_quantity = int(query_quantity)  # Apply the quantity from query parameter
+
+        # Update the item quantity in the current_detected_items dictionary
+        if item_name in current_detected_items:
+            print(f"Updating {item_name} in current_detected_items with quantity {detected_quantity}")
+            current_detected_items[item_name]["count"] = detected_quantity
+        else:
+            print(f"Adding new item {item_name} with quantity {detected_quantity}")
+            current_detected_items[item_name] = {"name": item_name, "count": detected_quantity}
+
+        # Keep track of the updated item in the temporary dictionary
+        updated_items[item_name] = current_detected_items[item_name]
+
+    # Return the detected and updated items
     return jsonify({
         "status": "success",
-        "detected_items": detected_items  # Now returning the full stack of parsed data
+        "detected_items": [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} 
+                           for item in updated_items.values()]
     }), 200
 
 @app.route("/add", methods=["POST"])
 def add_foods():
     global current_detected_items
+
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
-    items = [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} for item in current_detected_items.values()]
-    added_items = monitor.add_items(items)
-    current_detected_items = {}
+    
+    # Get query parameters for optional filtering
+    filter_category = request.args.get('category')  # Optionally filter by category
+    filter_quantity = request.args.get('quantity')  # Quantity filter, if present
+
+    # Prepare items to add from the detected items
+    items_to_add = []
+    for item_name, item_info in current_detected_items.items():
+        # If quantity filter exists, modify the quantity
+        if filter_quantity:
+            item_info["count"] = int(filter_quantity)  # Set the quantity to the query parameter value
+
+        # Only include items if they match the category filter (if provided)
+        if not filter_category or (filter_category and item_info.get("food_type") == filter_category):
+            items_to_add.append({
+                "name": item_name,
+                "quantity": item_info["count"]
+            })
+
+    if not items_to_add:
+        return jsonify({"error": "No items to add based on the filter provided."}), 400
+
+    # Add items to the database using the monitor's add_items method
+    added_items = monitor.add_items(items_to_add)
+
+    # Clear the current detected items after adding them
+    current_detected_items.clear()
+
     return jsonify({
         "status": "success",
         "added_items": [
             {"inventoryID": item.inventoryID, "food_name": item.food_name, "food_type": item.food_type,
              "entry_date": item.entry_date.isoformat(), "best_before": str(item.best_before),
-             "confidence": item.confidence, "quantity": item.quantity} for item in added_items]
+             "confidence": item.confidence, "quantity": item.quantity} for item in added_items
+        ]
     }), 200
+
 
 @app.route("/remove", methods=["POST"])
 def remove_food():
@@ -201,41 +267,21 @@ def remove_food():
 
     # Use the session context manager to ensure proper session management
     with SessionLocal() as db:
-        try:
-            # Iterate over detected items and remove or decrease their quantity
-            for item in current_detected_items.values():
-                item_name = item["name"]
-                detected_quantity = item["count"]
+        item_names = [item["name"] for item in current_detected_items.values()]
+        items_to_remove = db.query(FoodInventory).filter(FoodInventory.food_name.in_(item_names)).all()
 
-                # Check if the item exists in the database
-                inventory_item = db.query(FoodInventory).filter(FoodInventory.food_name == item_name).first()
-                
-                if inventory_item:
-                    if inventory_item.quantity > detected_quantity:
-                        inventory_item.quantity -= detected_quantity  # Subtract the detected quantity
-                    else:
-                        db.delete(inventory_item)  # Remove the item from the database if quantity is 0 or less
-                else:
-                    logger.warning(f"Item '{item_name}' not found in inventory, skipping removal")
+        for item in items_to_remove:
+            item_name = item.food_name
+            quantity = item.quantity
 
-            db.commit()  # Commit all changes
-            current_detected_items = {}  # Reset detected items after removal
-            return jsonify({"status": "success", "message": "Items removed from inventory"}), 200
+            # Decrease quantity or remove item completely
+            if quantity > 1:
+                item.quantity -= 1
+            else:
+                db.delete(item)
 
-        except Exception as e:
-            db.rollback()  # Rollback in case of error
-            logger.error(f"Error in remove_food: {e}")
-            return jsonify({"error": "An error occurred while removing the food item"}), 500
-
-@app.route("/close-camera", methods=["POST"])
-def close_camera():
-    global current_camera, current_detected_items
-    if current_camera is None:
-        return jsonify({"status": "warning", "message": "Camera is not open"}), 400
-    current_camera.release()
-    current_camera = None
-    current_detected_items = {}
-    return jsonify({"status": "success", "message": "Camera closed"}), 200
+        db.commit()
+        return jsonify({"status": "success", "removed_items": [item.food_name for item in items_to_remove]}), 200
 
 if __name__ == "__main__":
     app.run(debug=True)
