@@ -43,7 +43,7 @@ Base.metadata.create_all(bind=engine)
 
 # Global variables to track camera and detected items
 current_camera = None
-current_detected_items = []
+current_detected_items = {}
 
 class RefrigeratorMonitor:
     def __init__(self, region_name="us-east-1"):
@@ -76,22 +76,33 @@ class RefrigeratorMonitor:
                 MaxLabels=20,
                 MinConfidence=70,
             )
-            detected_items = []
+            detected_items = {}
+
+            # Iterate over the detected labels
             for label in response["Labels"]:
                 if label["Name"] in self.food_categories:
-                    detected_items.append({"name": label["Name"], "confidence": label["Confidence"]})
-            for new_item in detected_items:
-                existing_item = next((item for item in current_detected_items if item["name"] == new_item["name"]), None)
-                if existing_item:
-                    existing_item["confidence"] = max(existing_item["confidence"], new_item["confidence"])
+                    item_name = label["Name"]
+                    confidence = label["Confidence"]
+                    if item_name not in detected_items:
+                        detected_items[item_name] = {"name": item_name, "confidence": confidence, "count": 1}
+                    else:
+                        detected_items[item_name]["count"] += 1
+
+            # Update current_detected_items dictionary with the latest counts
+            for item_name, item in detected_items.items():
+                if item_name in current_detected_items:
+                    current_detected_items[item_name]["count"] += item["count"]
                 else:
-                    current_detected_items.append(new_item)
-            return current_detected_items
+                    current_detected_items[item_name] = item
+
+            # Return the entire list of detected items with counts (full stack)
+            return [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} for item in current_detected_items.values()]
+
         except Exception as e:
             logger.error(f"Error in AWS Rekognition detection: {e}")
             return []
 
-    def add_items(self, items, quantities=None):
+    def add_items(self, items):
         current_time = datetime.utcnow()
         expiration_days = {"Fruits": 7, "Vegetables": 10, "Meat": 3, "Dairy": 5}
         inventory = []
@@ -100,10 +111,10 @@ class RefrigeratorMonitor:
         with SessionLocal() as db:
             try:
                 new_item_added = None  # Keep track if a new item is added
-                for i, item in enumerate(items):
+                for item in items:
                     category = self.food_categories.get(item["name"], "Other")
                     expiration_delta = timedelta(days=expiration_days.get(category, 3))
-                    quantity = quantities[i] if quantities and i < len(quantities) else 1
+                    quantity = item["quantity"]
                     existing_item = db.query(FoodInventory).filter(FoodInventory.food_name == item["name"]).first()
 
                     if existing_item:
@@ -144,7 +155,7 @@ def open_camera():
     if current_camera is not None and current_camera.isOpened():
         return jsonify({"status": "warning", "message": "Camera already open"}), 400
     current_camera = cv2.VideoCapture(0)
-    current_detected_items = []
+    current_detected_items = {}
     if not current_camera.isOpened():
         current_camera = None
         return jsonify({"error": "Unable to access the camera"}), 500
@@ -162,7 +173,7 @@ def detect_items():
     detected_items = monitor.detect_items_from_frame(frame)
     return jsonify({
         "status": "success",
-        "detected_items": [{"name": item["name"], "confidence": item["confidence"]} for item in detected_items]
+        "detected_items": detected_items  # Now returning the full stack of parsed data
     }), 200
 
 @app.route("/add", methods=["POST"])
@@ -170,9 +181,9 @@ def add_foods():
     global current_detected_items
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
-    quantities = [1] * len(current_detected_items)
-    added_items = monitor.add_items(current_detected_items, quantities)
-    current_detected_items = []
+    items = [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} for item in current_detected_items.values()]
+    added_items = monitor.add_items(items)
+    current_detected_items = {}
     return jsonify({
         "status": "success",
         "added_items": [
@@ -181,6 +192,41 @@ def add_foods():
              "confidence": item.confidence, "quantity": item.quantity} for item in added_items]
     }), 200
 
+@app.route("/remove", methods=["POST"])
+def remove_food():
+    global current_detected_items
+    
+    if not current_detected_items:
+        return jsonify({"error": "No items detected. Use /detect first."}), 400
+
+    # Use the session context manager to ensure proper session management
+    with SessionLocal() as db:
+        try:
+            # Iterate over detected items and remove or decrease their quantity
+            for item in current_detected_items.values():
+                item_name = item["name"]
+                detected_quantity = item["count"]
+
+                # Check if the item exists in the database
+                inventory_item = db.query(FoodInventory).filter(FoodInventory.food_name == item_name).first()
+                
+                if inventory_item:
+                    if inventory_item.quantity > detected_quantity:
+                        inventory_item.quantity -= detected_quantity  # Subtract the detected quantity
+                    else:
+                        db.delete(inventory_item)  # Remove the item from the database if quantity is 0 or less
+                else:
+                    logger.warning(f"Item '{item_name}' not found in inventory, skipping removal")
+
+            db.commit()  # Commit all changes
+            current_detected_items = {}  # Reset detected items after removal
+            return jsonify({"status": "success", "message": "Items removed from inventory"}), 200
+
+        except Exception as e:
+            db.rollback()  # Rollback in case of error
+            logger.error(f"Error in remove_food: {e}")
+            return jsonify({"error": "An error occurred while removing the food item"}), 500
+
 @app.route("/close-camera", methods=["POST"])
 def close_camera():
     global current_camera, current_detected_items
@@ -188,7 +234,7 @@ def close_camera():
         return jsonify({"status": "warning", "message": "Camera is not open"}), 400
     current_camera.release()
     current_camera = None
-    current_detected_items = []
+    current_detected_items = {}
     return jsonify({"status": "success", "message": "Camera closed"}), 200
 
 if __name__ == "__main__":
