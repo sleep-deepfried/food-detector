@@ -261,27 +261,43 @@ def add_foods():
 @app.route("/remove", methods=["POST"])
 def remove_food():
     global current_detected_items
-    
+
+    # Retrieve optional query parameters
+    item_name = request.args.get("item_name")  # Name of the item to remove
+    quantity_to_remove = int(request.args.get("quantity", 1))  # Quantity to remove (default is 1)
+
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
 
-    # Use the session context manager to ensure proper session management
+    # Use the session context manager for proper session handling
     with SessionLocal() as db:
-        item_names = [item["name"] for item in current_detected_items.values()]
-        items_to_remove = db.query(FoodInventory).filter(FoodInventory.food_name.in_(item_names)).all()
+        query = db.query(FoodInventory)
+
+        # Filter by item name if provided
+        if item_name:
+            query = query.filter(FoodInventory.food_name == item_name)
+        else:
+            # Use all detected item names if no specific item_name provided
+            item_names = [item["name"] for item in current_detected_items.values()]
+            query = query.filter(FoodInventory.food_name.in_(item_names))
+
+        # Retrieve the items to be removed
+        items_to_remove = query.all()
 
         for item in items_to_remove:
-            item_name = item.food_name
-            quantity = item.quantity
-
-            # Decrease quantity or remove item completely
-            if quantity > 1:
-                item.quantity -= 1
-            else:
+            if quantity_to_remove >= item.quantity:
+                # If quantity to remove is greater or equal, delete the item
                 db.delete(item)
+            else:
+                # Otherwise, just decrease the quantity
+                item.quantity -= quantity_to_remove
 
         db.commit()
-        return jsonify({"status": "success", "removed_items": [item.food_name for item in items_to_remove]}), 200
+        return jsonify({
+            "status": "success",
+            "removed_items": [{"food_name": item.food_name, "remaining_quantity": item.quantity} for item in items_to_remove]
+        }), 200
+
 
 if __name__ == "__main__":
     app.run(debug=True)
