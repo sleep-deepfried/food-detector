@@ -23,10 +23,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database connection setup
-DATABASE_URL = os.getenv('DATABASE_URL')
+DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
+SessionLocal = scoped_session(
+    sessionmaker(autocommit=False, autoflush=False, bind=engine)
+)
 Base = declarative_base()
+
 
 # Define the Food Inventory Model
 class FoodInventory(Base):
@@ -39,11 +42,13 @@ class FoodInventory(Base):
     confidence = Column(Float, nullable=True)
     quantity = Column(Integer, nullable=True, default=1)
 
+
 Base.metadata.create_all(bind=engine)
 
 # Global variables to track camera and detected items
 current_camera = None
 current_detected_items = {}
+
 
 class RefrigeratorMonitor:
     def __init__(self, region_name="us-east-1"):
@@ -54,12 +59,24 @@ class RefrigeratorMonitor:
             region_name=region_name,
         )
         self.food_categories = {
-            "Apple": "Fruits", "Banana": "Fruits", "Carrot": "Vegetables",
-            "Chicken": "Meat", "Milk": "Dairy", "Pork": "Meat",
-            "Egg": "Poultry", "Beef": "Meat", "Cheese": "Dairy",
-            "Potato": "Vegetables", "Tomato": "Vegetables", "Lettuce": "Vegetables",
-            "Onion": "Vegetables", "Orange": "Fruits", "Garlic": "Vegetables",
-            "Pineapple": "Fruits", "Strawberry": "Fruits", "Bread": "Grains",
+            "Apple": "Fruits",
+            "Banana": "Fruits",
+            "Carrot": "Vegetables",
+            "Chicken": "Meat",
+            "Milk": "Dairy",
+            "Pork": "Meat",
+            "Egg": "Poultry",
+            "Beef": "Meat",
+            "Cheese": "Dairy",
+            "Potato": "Vegetables",
+            "Tomato": "Vegetables",
+            "Lettuce": "Vegetables",
+            "Onion": "Vegetables",
+            "Orange": "Fruits",
+            "Garlic": "Vegetables",
+            "Pineapple": "Fruits",
+            "Strawberry": "Fruits",
+            "Bread": "Grains",
             "Mango": "Fruits",
         }
 
@@ -84,7 +101,11 @@ class RefrigeratorMonitor:
                     item_name = label["Name"]
                     confidence = label["Confidence"]
                     if item_name not in detected_items:
-                        detected_items[item_name] = {"name": item_name, "confidence": confidence, "count": 1}
+                        detected_items[item_name] = {
+                            "name": item_name,
+                            "confidence": confidence,
+                            "count": 1,
+                        }
                     else:
                         detected_items[item_name]["count"] += 1
 
@@ -96,7 +117,14 @@ class RefrigeratorMonitor:
                     current_detected_items[item_name] = item
 
             # Return the entire list of detected items with counts (full stack)
-            return [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} for item in current_detected_items.values()]
+            return [
+                {
+                    "name": item["name"],
+                    "confidence": item["confidence"],
+                    "quantity": item["count"],
+                }
+                for item in current_detected_items.values()
+            ]
 
         except Exception as e:
             logger.error(f"Error in AWS Rekognition detection: {e}")
@@ -115,7 +143,11 @@ class RefrigeratorMonitor:
                     category = self.food_categories.get(item["name"], "Other")
                     expiration_delta = timedelta(days=expiration_days.get(category, 3))
                     quantity = item["quantity"]
-                    existing_item = db.query(FoodInventory).filter(FoodInventory.food_name == item["name"]).first()
+                    existing_item = (
+                        db.query(FoodInventory)
+                        .filter(FoodInventory.food_name == item["name"])
+                        .first()
+                    )
 
                     if existing_item:
                         existing_item.quantity += quantity
@@ -126,7 +158,7 @@ class RefrigeratorMonitor:
                             entry_date=current_time,
                             best_before=(current_time + expiration_delta).time(),
                             confidence=item["confidence"],
-                            quantity=quantity
+                            quantity=quantity,
                         )
                         db.add(new_item)  # Add the new item to the session
                         new_item_added = new_item  # Mark new item added
@@ -138,7 +170,13 @@ class RefrigeratorMonitor:
                     db.refresh(new_item_added)
 
                 # Return all the items (existing or newly added)
-                inventory.extend(db.query(FoodInventory).filter(FoodInventory.food_name.in_([item["name"] for item in items])).all())
+                inventory.extend(
+                    db.query(FoodInventory)
+                    .filter(
+                        FoodInventory.food_name.in_([item["name"] for item in items])
+                    )
+                    .all()
+                )
 
                 return inventory
             except Exception as e:
@@ -146,8 +184,10 @@ class RefrigeratorMonitor:
                 logger.error(f"Error in add_items: {e}")
                 raise
 
+
 # Instantiate the monitor class
 monitor = RefrigeratorMonitor()
+
 
 @app.route("/open-camera", methods=["POST"])
 def open_camera():
@@ -161,19 +201,24 @@ def open_camera():
         return jsonify({"error": "Unable to access the camera"}), 500
     return jsonify({"status": "success", "message": "Camera opened"}), 200
 
+
 @app.route("/detect", methods=["GET"])
 def detect_items():
     global current_camera
-    max_labels = int(request.args.get('max_labels', 20))  # Default to 20 if not specified
-    min_confidence = float(request.args.get('min_confidence', 70))  # Default to 70 if not specified
+    max_labels = int(
+        request.args.get("max_labels", 20)
+    )  # Default to 20 if not specified
+    min_confidence = float(
+        request.args.get("min_confidence", 70)
+    )  # Default to 70 if not specified
 
     if current_camera is None or not current_camera.isOpened():
         return jsonify({"error": "Camera is not open. Use /open-camera first."}), 500
-    
+
     ret, frame = current_camera.read()
     if not ret:
         return jsonify({"error": "Failed to capture image from camera"}), 500
-    
+
     # Resize frame to match Rekognition's expected input
     frame = cv2.resize(frame, (640, 480))
 
@@ -189,30 +234,49 @@ def detect_items():
 
         # Debugging: Print the detected item and quantity
         print(f"Detected Item: {item_name}, Quantity: {detected_quantity}")
-        
+
         # Check if a query parameter for this item exists
         query_quantity = request.args.get(f"quantity_{item_name}")
         if query_quantity:
             print(f"Found query parameter for {item_name}: {query_quantity}")
-            detected_quantity = int(query_quantity)  # Apply the quantity from query parameter
+            detected_quantity = int(
+                query_quantity
+            )  # Apply the quantity from query parameter
 
         # Update the item quantity in the current_detected_items dictionary
         if item_name in current_detected_items:
-            print(f"Updating {item_name} in current_detected_items with quantity {detected_quantity}")
+            print(
+                f"Updating {item_name} in current_detected_items with quantity {detected_quantity}"
+            )
             current_detected_items[item_name]["count"] = detected_quantity
         else:
             print(f"Adding new item {item_name} with quantity {detected_quantity}")
-            current_detected_items[item_name] = {"name": item_name, "count": detected_quantity}
+            current_detected_items[item_name] = {
+                "name": item_name,
+                "count": detected_quantity,
+            }
 
         # Keep track of the updated item in the temporary dictionary
         updated_items[item_name] = current_detected_items[item_name]
 
     # Return the detected and updated items
-    return jsonify({
-        "status": "success",
-        "detected_items": [{"name": item["name"], "confidence": item["confidence"], "quantity": item["count"]} 
-                           for item in updated_items.values()]
-    }), 200
+    return (
+        jsonify(
+            {
+                "status": "success",
+                "detected_items": [
+                    {
+                        "name": item["name"],
+                        "confidence": item["confidence"],
+                        "quantity": item["count"],
+                    }
+                    for item in updated_items.values()
+                ],
+            }
+        ),
+        200,
+    )
+
 
 @app.route("/add", methods=["POST"])
 def add_foods():
@@ -220,24 +284,25 @@ def add_foods():
 
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
-    
+
     # Get query parameters for optional filtering
-    filter_category = request.args.get('category')  # Optionally filter by category
-    filter_quantity = request.args.get('quantity')  # Quantity filter, if present
+    filter_category = request.args.get("category")  # Optionally filter by category
+    filter_quantity = request.args.get("quantity")  # Quantity filter, if present
 
     # Prepare items to add from the detected items
     items_to_add = []
     for item_name, item_info in current_detected_items.items():
         # If quantity filter exists, modify the quantity
         if filter_quantity:
-            item_info["count"] = int(filter_quantity)  # Set the quantity to the query parameter value
+            item_info["count"] = int(
+                filter_quantity
+            )  # Set the quantity to the query parameter value
 
         # Only include items if they match the category filter (if provided)
-        if not filter_category or (filter_category and item_info.get("food_type") == filter_category):
-            items_to_add.append({
-                "name": item_name,
-                "quantity": item_info["count"]
-            })
+        if not filter_category or (
+            filter_category and item_info.get("food_type") == filter_category
+        ):
+            items_to_add.append({"name": item_name, "quantity": item_info["count"]})
 
     if not items_to_add:
         return jsonify({"error": "No items to add based on the filter provided."}), 400
@@ -248,14 +313,26 @@ def add_foods():
     # Clear the current detected items after adding them
     current_detected_items.clear()
 
-    return jsonify({
-        "status": "success",
-        "added_items": [
-            {"inventoryID": item.inventoryID, "food_name": item.food_name, "food_type": item.food_type,
-             "entry_date": item.entry_date.isoformat(), "best_before": str(item.best_before),
-             "confidence": item.confidence, "quantity": item.quantity} for item in added_items
-        ]
-    }), 200
+    return (
+        jsonify(
+            {
+                "status": "success",
+                "added_items": [
+                    {
+                        "inventoryID": item.inventoryID,
+                        "food_name": item.food_name,
+                        "food_type": item.food_type,
+                        "entry_date": item.entry_date.isoformat(),
+                        "best_before": str(item.best_before),
+                        "confidence": item.confidence,
+                        "quantity": item.quantity,
+                    }
+                    for item in added_items
+                ],
+            }
+        ),
+        200,
+    )
 
 
 @app.route("/remove", methods=["POST"])
@@ -264,7 +341,9 @@ def remove_food():
 
     # Retrieve optional query parameters
     item_name = request.args.get("item_name")  # Name of the item to remove
-    quantity_to_remove = int(request.args.get("quantity", 1))  # Quantity to remove (default is 1)
+    quantity_to_remove = int(
+        request.args.get("quantity", 1)
+    )  # Quantity to remove (default is 1)
 
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
@@ -293,11 +372,22 @@ def remove_food():
                 item.quantity -= quantity_to_remove
 
         db.commit()
-        return jsonify({
-            "status": "success",
-            "removed_items": [{"food_name": item.food_name, "remaining_quantity": item.quantity} for item in items_to_remove]
-        }), 200
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "removed_items": [
+                        {
+                            "food_name": item.food_name,
+                            "remaining_quantity": item.quantity,
+                        }
+                        for item in items_to_remove
+                    ],
+                }
+            ),
+            200,
+        )
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=80, debug=True)
