@@ -3,17 +3,15 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import boto3
 import cv2
-import numpy as np
 import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Time, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 # Load environment variables
 load_dotenv()
-
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)
