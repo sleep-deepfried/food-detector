@@ -34,11 +34,11 @@ Base = declarative_base()
 # Define the Food Inventory Model
 class FoodInventory(Base):
     __tablename__ = "food_inventory"
-    inventoryID = Column(Integer, primary_key=True)
+    inventoryid = Column(Integer, primary_key=True)
     food_name = Column(String(255), nullable=True)
     food_type = Column(String(255), nullable=True)
     entry_date = Column(DateTime(timezone=True), nullable=True)
-    best_before = Column(Time(timezone=True), nullable=True)
+    best_before = Column(DateTime(timezone=True), nullable=True)
     confidence = Column(Float, nullable=True)
     quantity = Column(Integer, nullable=True, default=1)
 
@@ -51,7 +51,7 @@ current_detected_items = {}
 
 
 class RefrigeratorMonitor:
-    def __init__(self, region_name="us-east-1"):
+    def __init__(self, region_name="ap-southeast-1"):
         self.rekognition_client = boto3.client(
             "rekognition",
             aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -80,7 +80,7 @@ class RefrigeratorMonitor:
             "Mango": "Fruits",
         }
 
-    def detect_items_from_frame(self, frame, max_labels=20, min_confidence=70):
+    def detect_items_from_frame(self, frame, max_labels=10, min_confidence=80):
         global current_detected_items
         success, buffer = cv2.imencode(".jpg", frame)
         if not success:
@@ -156,7 +156,7 @@ class RefrigeratorMonitor:
                             food_name=item["name"],
                             food_type=category,
                             entry_date=current_time,
-                            best_before=(current_time + expiration_delta).time(),
+                            best_before=(current_time + expiration_delta),
                             confidence=item["confidence"],
                             quantity=quantity,
                         )
@@ -220,7 +220,7 @@ def detect_items():
         return jsonify({"error": "Failed to capture image from camera"}), 500
 
     # Resize frame to match Rekognition's expected input
-    frame = cv2.resize(frame, (640, 480))
+    frame = cv2.resize(frame, (320, 240))
 
     # Detect items from the frame using AWS Rekognition
     detected_items = monitor.detect_items_from_frame(frame, max_labels, min_confidence)
@@ -302,7 +302,13 @@ def add_foods():
         if not filter_category or (
             filter_category and item_info.get("food_type") == filter_category
         ):
-            items_to_add.append({"name": item_name, "quantity": item_info["count"]})
+            items_to_add.append(
+                {
+                    "name": item_name,
+                    "quantity": item_info["count"],
+                    "confidence": item_info["confidence"],
+                },
+            )
 
     if not items_to_add:
         return jsonify({"error": "No items to add based on the filter provided."}), 400
@@ -319,7 +325,7 @@ def add_foods():
                 "status": "success",
                 "added_items": [
                     {
-                        "inventoryID": item.inventoryID,
+                        "inventoryid": item.inventoryid,
                         "food_name": item.food_name,
                         "food_type": item.food_type,
                         "entry_date": item.entry_date.isoformat(),

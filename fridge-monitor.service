@@ -1,0 +1,14 @@
+[Unit]
+Description=Fridge Monitor API Service
+After=network.target
+
+[Service]
+User=earl
+WorkingDirectory=/home/earl/fridge-monitor
+Environment="PATH=/home/earl/fridge-monitor/venv/bin"
+EnvironmentFile=/home/earl/fridge-monitor/.env
+ExecStart=/home/earl/fridge-monitor/venv/bin/python app.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
