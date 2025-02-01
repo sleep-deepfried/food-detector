@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 User=earl
-WorkingDirectory=/home/earl/fridge-monitor
-Environment="PATH=/home/earl/fridge-monitor/venv/bin"
-EnvironmentFile=/home/earl/fridge-monitor/.env
-ExecStart=/home/earl/fridge-monitor/venv/bin/python app.py
+WorkingDirectory=/home/earl/food-detector
+Environment="PATH=/home/earl/food-detector/venv/bin"
+EnvironmentFile=/home/earl/food-detector/.env
+ExecStart=/home/earl/food-detector/venv/bin/python app.py
 Restart=always
 
 [Install]

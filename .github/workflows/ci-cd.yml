@@ -45,7 +45,7 @@ jobs:
         username: ${{ secrets.PI_USERNAME }}
         key: ${{ secrets.PI_SSH_KEY }}
         script: |
-          cd ~/fridge-monitor
+          cd ~/food-detector
           git pull
           pip3 install -r requirements.txt
-          sudo systemctl restart fridge-monitor
+          sudo systemctl restart food-detector
