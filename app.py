@@ -56,6 +56,7 @@ class RefrigeratorMonitor:
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             region_name=region_name,
         )
+        
         self.food_categories = {
             "Apple": "Fruits",
             "Banana": "Fruits",
@@ -76,6 +77,39 @@ class RefrigeratorMonitor:
             "Strawberry": "Fruits",
             "Bread": "Grains",
             "Mango": "Fruits",
+            
+            # Common in Filipino cuisine
+            "Rice": "Grains",
+            "Fish": "Seafood",
+            "Tilapia": "Seafood",
+            "Bangus (Milkfish)": "Seafood",
+            "Galunggong (Mackerel Scad)": "Seafood",
+            "Shrimp": "Seafood",
+            "Crab": "Seafood",
+            "Squid": "Seafood",
+            "Coconut": "Fruits",
+            "Coconut Milk": "Dairy",
+            "Ampalaya (Bitter Gourd)": "Vegetables",
+            "Malunggay (Moringa Leaves)": "Vegetables",
+            "Kangkong (Water Spinach)": "Vegetables",
+            "Sitaw (String Beans)": "Vegetables",
+            "Eggplant": "Vegetables",
+            "Papaya": "Fruits",
+            "Calamansi": "Fruits",
+            "Ube (Purple Yam)": "Vegetables",
+            "Cassava": "Vegetables",
+            "Gabi (Taro)": "Vegetables",
+            "Kamote (Sweet Potato)": "Vegetables",
+            "Langka (Jackfruit)": "Fruits",
+            "Pechay (Bok Choy)": "Vegetables",
+            "Chili Pepper": "Vegetables",
+            "Tamarind": "Fruits",
+            "Ginger": "Vegetables",
+            "Vinegar": "Condiments",
+            "Soy Sauce": "Condiments",
+            "Bagoong (Fermented Shrimp/Fish Paste)": "Condiments",
+            "Tuyo (Dried Fish)": "Seafood",
+            "Dilis (Anchovies)": "Seafood",
         }
 
     def detect_items_from_frame(self, frame, max_labels=10, min_confidence=80):
@@ -229,7 +263,7 @@ def detect_items():
     for item in detected_items:
         item_name = item["name"]
         detected_quantity = item["quantity"]
-
+ 
         # Debugging: Print the detected item and quantity
         print(f"Detected Item: {item_name}, Quantity: {detected_quantity}")
 
@@ -392,6 +426,14 @@ def remove_food():
             200,
         )
 
+@app.route("/close-camera", methods=["POST"])
+def close_camera():
+    global current_camera
+    if current_camera is None or not current_camera.isOpened():
+        return jsonify({"status": "warning", "message": "Camera is not open"}), 400
+    current_camera.release()
+    current_camera = None
+    return jsonify({"status": "success", "message": "Camera closed"}), 200
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
