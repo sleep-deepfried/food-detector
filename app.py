@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
+import csv
 
 # Load environment variables
 load_dotenv()
@@ -56,62 +57,20 @@ class RefrigeratorMonitor:
             aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
             region_name=region_name,
         )
-        
-        self.food_categories = {
-            "Apple": "Fruits",
-            "Banana": "Fruits",
-            "Carrot": "Vegetables",
-            "Chicken": "Meat",
-            "Milk": "Dairy",
-            "Pork": "Meat",
-            "Egg": "Poultry",
-            "Beef": "Meat",
-            "Cheese": "Dairy",
-            "Potato": "Vegetables",
-            "Tomato": "Vegetables",
-            "Lettuce": "Vegetables",
-            "Onion": "Vegetables",
-            "Orange": "Fruits",
-            "Garlic": "Vegetables",
-            "Pineapple": "Fruits",
-            "Strawberry": "Fruits",
-            "Bread": "Grains",
-            "Mango": "Fruits",
-            
-            # Common in Filipino cuisine
-            "Rice": "Grains",
-            "Fish": "Seafood",
-            "Tilapia": "Seafood",
-            "Bangus (Milkfish)": "Seafood",
-            "Galunggong (Mackerel Scad)": "Seafood",
-            "Shrimp": "Seafood",
-            "Crab": "Seafood",
-            "Squid": "Seafood",
-            "Coconut": "Fruits",
-            "Coconut Milk": "Dairy",
-            "Ampalaya (Bitter Gourd)": "Vegetables",
-            "Malunggay (Moringa Leaves)": "Vegetables",
-            "Kangkong (Water Spinach)": "Vegetables",
-            "Sitaw (String Beans)": "Vegetables",
-            "Eggplant": "Vegetables",
-            "Papaya": "Fruits",
-            "Calamansi": "Fruits",
-            "Ube (Purple Yam)": "Vegetables",
-            "Cassava": "Vegetables",
-            "Gabi (Taro)": "Vegetables",
-            "Kamote (Sweet Potato)": "Vegetables",
-            "Langka (Jackfruit)": "Fruits",
-            "Pechay (Bok Choy)": "Vegetables",
-            "Chili Pepper": "Vegetables",
-            "Tamarind": "Fruits",
-            "Ginger": "Vegetables",
-            "Vinegar": "Condiments",
-            "Soy Sauce": "Condiments",
-            "Bagoong (Fermented Shrimp/Fish Paste)": "Condiments",
-            "Tuyo (Dried Fish)": "Seafood",
-            "Dilis (Anchovies)": "Seafood",
-        }
 
+        self.food_categories = self.load_food_categories("food_categories.csv")
+    
+    def load_food_categories(self, csv_file):
+        categories = {}
+        try:
+            with open(csv_file, mode="r") as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    categories[row['food_name']] = row['category']
+        except Exception as e:
+            logger.error(f"Error in loading food categories: {e}")
+        return categories
+        
     def detect_items_from_frame(self, frame, max_labels=10, min_confidence=80):
         global current_detected_items
         success, buffer = cv2.imencode(".jpg", frame)
