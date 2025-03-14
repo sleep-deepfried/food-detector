@@ -58,7 +58,7 @@ class RefrigeratorMonitor:
         )
 
         self.food_categories = self.load_food_categories("food_categories.csv")
-    
+
     def load_food_categories(self, csv_file):
         categories = {}
         try:
@@ -69,7 +69,7 @@ class RefrigeratorMonitor:
         except Exception as e:
             logger.error(f"Error in loading food categories: {e}")
         return categories
-        
+
     def detect_items_from_frame(self, frame, max_labels=10, min_confidence=80):
         global current_detected_items
         success, buffer = cv2.imencode(".jpg", frame)
@@ -184,7 +184,7 @@ def open_camera():
     global current_camera, current_detected_items
     if current_camera is not None and current_camera.isOpened():
         return jsonify({"status": "warning", "message": "Camera already open"}), 400
-    current_camera = cv2.VideoCapture(0)
+    current_camera = cv2.VideoCapture("/dev/video0")
     current_detected_items = {}
     if not current_camera.isOpened():
         current_camera = None
@@ -221,7 +221,7 @@ def detect_items():
     for item in detected_items:
         item_name = item["name"]
         detected_quantity = item["quantity"]
- 
+
         # Debugging: Print the detected item and quantity
         print(f"Detected Item: {item_name}, Quantity: {detected_quantity}")
 
@@ -384,6 +384,7 @@ def remove_food():
             200,
         )
 
+
 @app.route("/close-camera", methods=["POST"])
 def close_camera():
     global current_camera
@@ -392,6 +393,7 @@ def close_camera():
     current_camera.release()
     current_camera = None
     return jsonify({"status": "success", "message": "Camera closed"}), 200
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
