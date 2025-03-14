@@ -182,14 +182,28 @@ monitor = RefrigeratorMonitor()
 @app.route("/open-camera", methods=["POST"])
 def open_camera():
     global current_camera, current_detected_items
-    if current_camera is not None and current_camera.isOpened():
-        return jsonify({"status": "warning", "message": "Camera already open"}), 400
-    current_camera = cv2.VideoCapture("/dev/video0")
-    current_detected_items = {}
-    if not current_camera.isOpened():
+
+    # Make sure any previous camera is fully released
+    if current_camera is not None:
+        current_camera.release()
         current_camera = None
-        return jsonify({"error": "Unable to access the camera"}), 500
-    return jsonify({"status": "success", "message": "Camera opened"}), 200
+        import time
+
+        time.sleep(1)
+
+    # Try opening with different camera indices if the default fails
+    for camera_index in [0, 1, 2]:
+        try:
+            current_camera = cv2.VideoCapture(camera_index)
+            if current_camera.isOpened():
+                current_detected_items = {}
+                return jsonify({"status": "success", "message": "Camera opened"}), 200
+        except Exception as e:
+            logger.error(f"Failed to open camera at index {camera_index}: {e}")
+
+    # If we've tried all indices and failed
+    current_camera = None
+    return jsonify({"error": "Unable to access the camera"}), 500
 
 
 @app.route("/detect", methods=["GET"])
@@ -390,8 +404,16 @@ def close_camera():
     global current_camera
     if current_camera is None or not current_camera.isOpened():
         return jsonify({"status": "warning", "message": "Camera is not open"}), 400
+
+    # Release the camera
     current_camera.release()
     current_camera = None
+
+    # Add a small delay to ensure the camera is fully released
+    import time
+
+    time.sleep(1)
+
     return jsonify({"status": "success", "message": "Camera closed"}), 200
 
 
