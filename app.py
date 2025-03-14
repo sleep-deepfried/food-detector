@@ -7,8 +7,7 @@ import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
 import csv
 
 # Load environment variables
@@ -64,9 +63,9 @@ class RefrigeratorMonitor:
         categories = {}
         try:
             with open(csv_file, mode="r") as file:
-                reader = csv.DictReader(file)
+                reader = csv.reader(file)
                 for row in reader:
-                    categories[row['food_name']] = row['category']
+                    categories[row[0]] = row[1]
         except Exception as e:
             logger.error(f"Error in loading food categories: {e}")
         return categories
