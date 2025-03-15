@@ -317,28 +317,31 @@ def add_foods():
 
     # Get query parameters for optional filtering
     filter_category = request.args.get("category")  # Optionally filter by category
-    filter_quantity = request.args.get("quantity")  # Quantity filter, if present
 
-    # Prepare items to add from the detected items
+    # Prepare items to add from the detected items, with manually updated quantities from frontend
     items_to_add = []
     for item_name, item_info in current_detected_items.items():
-        # If quantity filter exists, modify the quantity
-        if filter_quantity:
-            item_info["count"] = int(
-                filter_quantity
-            )  # Set the quantity to the query parameter value
+        # Check if there's a manually specified quantity for this item
+        manual_quantity = request.args.get(f"quantity_{item_name}")
+
+        # Use manually specified quantity if available, otherwise use detected count
+        quantity = (
+            int(manual_quantity) if manual_quantity is not None else item_info["count"]
+        )
 
         # Only include items if they match the category filter (if provided)
         if not filter_category or (
             filter_category and item_info.get("food_type") == filter_category
         ):
-            items_to_add.append(
-                {
-                    "name": item_name,
-                    "quantity": item_info["count"],
-                    "confidence": item_info["confidence"],
-                },
-            )
+            # Only add items with quantity > 0
+            if quantity > 0:
+                items_to_add.append(
+                    {
+                        "name": item_name,
+                        "quantity": quantity,
+                        "confidence": item_info["confidence"],
+                    },
+                )
 
     if not items_to_add:
         return jsonify({"error": "No items to add based on the filter provided."}), 400
