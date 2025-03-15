@@ -208,78 +208,104 @@ def open_camera():
 
 @app.route("/detect", methods=["GET"])
 def detect_items():
-    global current_camera
-    max_labels = int(
-        request.args.get("max_labels", 20)
-    )  # Default to 20 if not specified
-    min_confidence = float(
-        request.args.get("min_confidence", 70)
-    )  # Default to 70 if not specified
+    global current_camera, current_detected_items
+    max_labels = int(request.args.get("max_labels", 20))
+    min_confidence = float(request.args.get("min_confidence", 70))
 
-    if current_camera is None or not current_camera.isOpened():
-        return jsonify({"error": "Camera is not open. Use /open-camera first."}), 500
+    try:
+        # Open the camera if it's not already open
+        if current_camera is None or not current_camera.isOpened():
+            logger.info("Opening camera for detection")
+            # Try opening with different camera indices
+            for camera_index in [0, 1, 2]:
+                try:
+                    if current_camera is not None:
+                        current_camera.release()  # Release any previous camera object
+                        import time
 
-    ret, frame = current_camera.read()
-    if not ret:
-        return jsonify({"error": "Failed to capture image from camera"}), 500
+                        time.sleep(1)  # Small delay to ensure proper release
 
-    # Resize frame to match Rekognition's expected input
-    frame = cv2.resize(frame, (320, 240))
+                    current_camera = cv2.VideoCapture(camera_index)
+                    if current_camera.isOpened():
+                        logger.info(
+                            f"Successfully opened camera at index {camera_index}"
+                        )
+                        break
+                except Exception as e:
+                    logger.error(f"Failed to open camera at index {camera_index}: {e}")
 
-    # Detect items from the frame using AWS Rekognition
-    detected_items = monitor.detect_items_from_frame(frame, max_labels, min_confidence)
+            # If we couldn't open any camera
+            if current_camera is None or not current_camera.isOpened():
+                return jsonify({"error": "Unable to access any camera"}), 500
 
-    # Process detected items and update the quantities correctly
-    updated_items = {}  # Temporary dictionary to hold updated items
+        # Capture a frame
+        ret, frame = current_camera.read()
+        if not ret:
+            return jsonify({"error": "Failed to capture image from camera"}), 500
 
-    for item in detected_items:
-        item_name = item["name"]
-        detected_quantity = item["quantity"]
+        # Resize frame for Rekognition
+        frame = cv2.resize(frame, (320, 240))
 
-        # Debugging: Print the detected item and quantity
-        print(f"Detected Item: {item_name}, Quantity: {detected_quantity}")
+        # Detect items
+        detected_items = monitor.detect_items_from_frame(
+            frame, max_labels, min_confidence
+        )
 
-        # Check if a query parameter for this item exists
-        query_quantity = request.args.get(f"quantity_{item_name}")
-        if query_quantity:
-            print(f"Found query parameter for {item_name}: {query_quantity}")
-            detected_quantity = int(
-                query_quantity
-            )  # Apply the quantity from query parameter
+        # Process detected items and update quantities
+        updated_items = {}
+        for item in detected_items:
+            item_name = item["name"]
+            detected_quantity = item["quantity"]
 
-        # Update the item quantity in the current_detected_items dictionary
-        if item_name in current_detected_items:
-            print(
-                f"Updating {item_name} in current_detected_items with quantity {detected_quantity}"
-            )
-            current_detected_items[item_name]["count"] = detected_quantity
-        else:
-            print(f"Adding new item {item_name} with quantity {detected_quantity}")
-            current_detected_items[item_name] = {
-                "name": item_name,
-                "count": detected_quantity,
-            }
+            # Check for query parameter override
+            query_quantity = request.args.get(f"quantity_{item_name}")
+            if query_quantity:
+                detected_quantity = int(query_quantity)
 
-        # Keep track of the updated item in the temporary dictionary
-        updated_items[item_name] = current_detected_items[item_name]
+            # Update the item quantity
+            if item_name in current_detected_items:
+                current_detected_items[item_name]["count"] = detected_quantity
+            else:
+                current_detected_items[item_name] = {
+                    "name": item_name,
+                    "count": detected_quantity,
+                    "confidence": item["confidence"],
+                }
 
-    # Return the detected and updated items
-    return (
-        jsonify(
-            {
-                "status": "success",
-                "detected_items": [
-                    {
-                        "name": item["name"],
-                        "confidence": item["confidence"],
-                        "quantity": item["count"],
-                    }
-                    for item in updated_items.values()
-                ],
-            }
-        ),
-        200,
-    )
+            updated_items[item_name] = current_detected_items[item_name]
+
+        # Close the camera after detection
+        if current_camera is not None and current_camera.isOpened():
+            current_camera.release()
+            current_camera = None
+            logger.info("Camera closed after detection")
+
+        # Return results
+        return (
+            jsonify(
+                {
+                    "status": "success",
+                    "detected_items": [
+                        {
+                            "name": item["name"],
+                            "confidence": item["confidence"],
+                            "quantity": item["count"],
+                        }
+                        for item in updated_items.values()
+                    ],
+                }
+            ),
+            200,
+        )
+
+    except Exception as e:
+        # Ensure camera is closed in case of errors
+        if current_camera is not None:
+            current_camera.release()
+            current_camera = None
+
+        logger.error(f"Error in detect_items: {e}")
+        return jsonify({"error": f"Failed to detect items: {str(e)}"}), 500
 
 
 @app.route("/add", methods=["POST"])
