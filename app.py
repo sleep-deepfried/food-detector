@@ -179,33 +179,6 @@ class RefrigeratorMonitor:
 monitor = RefrigeratorMonitor()
 
 
-@app.route("/open-camera", methods=["POST"])
-def open_camera():
-    global current_camera, current_detected_items
-
-    # Make sure any previous camera is fully released
-    if current_camera is not None:
-        current_camera.release()
-        current_camera = None
-        import time
-
-        time.sleep(1)
-
-    # Try opening with different camera indices if the default fails
-    for camera_index in [0, 1, 2]:
-        try:
-            current_camera = cv2.VideoCapture(camera_index)
-            if current_camera.isOpened():
-                current_detected_items = {}
-                return jsonify({"status": "success", "message": "Camera opened"}), 200
-        except Exception as e:
-            logger.error(f"Failed to open camera at index {camera_index}: {e}")
-
-    # If we've tried all indices and failed
-    current_camera = None
-    return jsonify({"error": "Unable to access the camera"}), 500
-
-
 @app.route("/detect", methods=["GET"])
 def detect_items():
     global current_camera, current_detected_items
@@ -378,72 +351,91 @@ def add_foods():
 def remove_food():
     global current_detected_items
 
-    # Retrieve optional query parameters
-    item_name = request.args.get("item_name")  # Name of the item to remove
-    quantity_to_remove = int(
-        request.args.get("quantity", 1)
-    )  # Quantity to remove (default is 1)
-
     if not current_detected_items:
         return jsonify({"error": "No items detected. Use /detect first."}), 400
 
-    # Use the session context manager for proper session handling
-    with SessionLocal() as db:
-        query = db.query(FoodInventory)
+    # Get query parameters for optional filtering
+    filter_category = request.args.get("category")  # Optionally filter by category
 
-        # Filter by item name if provided
-        if item_name:
-            query = query.filter(FoodInventory.food_name == item_name)
-        else:
-            # Use all detected item names if no specific item_name provided
-            item_names = [item["name"] for item in current_detected_items.values()]
-            query = query.filter(FoodInventory.food_name.in_(item_names))
+    # Prepare items to remove with manually updated quantities from frontend
+    items_to_remove = []
+    for item_name, item_info in current_detected_items.items():
+        # Check if there's a manually specified quantity for this item
+        manual_quantity = request.args.get(f"quantity_{item_name}")
 
-        # Retrieve the items to be removed
-        items_to_remove = query.all()
-
-        for item in items_to_remove:
-            if quantity_to_remove >= item.quantity:
-                # If quantity to remove is greater or equal, delete the item
-                db.delete(item)
-            else:
-                # Otherwise, just decrease the quantity
-                item.quantity -= quantity_to_remove
-
-        db.commit()
-        return (
-            jsonify(
-                {
-                    "status": "success",
-                    "removed_items": [
-                        {
-                            "food_name": item.food_name,
-                            "remaining_quantity": item.quantity,
-                        }
-                        for item in items_to_remove
-                    ],
-                }
-            ),
-            200,
+        # Use manually specified quantity if available, otherwise use detected count
+        quantity = (
+            int(manual_quantity) if manual_quantity is not None else item_info["count"]
         )
 
+        # Only include items if they match the category filter (if provided)
+        if not filter_category or (
+            filter_category and item_info.get("food_type") == filter_category
+        ):
+            # Only remove items with quantity > 0
+            if quantity > 0:
+                items_to_remove.append({"name": item_name, "quantity": quantity})
 
-@app.route("/close-camera", methods=["POST"])
-def close_camera():
-    global current_camera
-    if current_camera is None or not current_camera.isOpened():
-        return jsonify({"status": "warning", "message": "Camera is not open"}), 400
+    if not items_to_remove:
+        return (
+            jsonify({"error": "No items to remove based on the filter provided."}),
+            400,
+        )
 
-    # Release the camera
-    current_camera.release()
-    current_camera = None
+    # Use the session context manager for proper session handling
+    with SessionLocal() as db:
+        try:
+            removed_items = []
+            for item in items_to_remove:
+                item_name = item["name"]
+                quantity_to_remove = item["quantity"]
 
-    # Add a small delay to ensure the camera is fully released
-    import time
+                # Find the item in the database
+                db_item = (
+                    db.query(FoodInventory)
+                    .filter(FoodInventory.food_name == item_name)
+                    .first()
+                )
 
-    time.sleep(1)
+                if db_item:
+                    # Track the item and its status
+                    item_status = {
+                        "food_name": db_item.food_name,
+                        "initial_quantity": db_item.quantity,
+                    }
 
-    return jsonify({"status": "success", "message": "Camera closed"}), 200
+                    if quantity_to_remove >= db_item.quantity:
+                        # If quantity to remove is greater or equal, delete the item
+                        db.delete(db_item)
+                        item_status["status"] = "deleted"
+                        item_status["remaining_quantity"] = 0
+                    else:
+                        # Otherwise, just decrease the quantity
+                        db_item.quantity -= quantity_to_remove
+                        item_status["status"] = "updated"
+                        item_status["remaining_quantity"] = db_item.quantity
+
+                    removed_items.append(item_status)
+
+            # Commit all changes
+            db.commit()
+
+            # Clear the current detected items after removing them
+            current_detected_items.clear()
+
+            return jsonify({"status": "success", "removed_items": removed_items}), 200
+
+        except Exception as e:
+            db.rollback()  # Rollback in case of error
+            logger.error(f"Error in remove_food: {e}")
+            return jsonify({"error": f"Failed to remove items: {str(e)}"}), 500
+
+
+@app.route("/clear", methods=["POST"])
+def clear_items():
+    global current_detected_items
+    current_detected_items.clear()
+    return jsonify({"status": "success", "message": "Detected items cleared"}), 200
 
 
 if __name__ == "__main__":
