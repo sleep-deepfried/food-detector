@@ -6,9 +6,14 @@ import cv2
 import logging
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, Boolean
 from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
 import csv
+import time
+import threading
+
+# Import the sensor functions
+from sensor import read_dht_sensor, is_gpio_available, setup_gpio, check_ir_sensor
 
 # Load environment variables
 load_dotenv()
@@ -41,11 +46,21 @@ class FoodInventory(Base):
     quantity = Column(Integer, nullable=True, default=1)
 
 
-Base.metadata.create_all(bind=engine)
-
-# Global variables to track camera and detected items
+# Global variables
 current_camera = None
 current_detected_items = {}
+ir_status = False  # To track IR sensor state
+ir_pin = None  # Will store the GPIO pin for IR sensor
+ir_monitoring_active = False  # Flag to control IR monitoring thread
+
+# Setup GPIO if available
+if is_gpio_available():
+    ir_pin = setup_gpio()
+    logger.info(f"GPIO set up successfully. IR pin: {ir_pin}")
+else:
+    logger.warning("GPIO not available. Sensors will return simulated data.")
+
+Base.metadata.create_all(bind=engine)
 
 
 class RefrigeratorMonitor:
@@ -175,8 +190,44 @@ class RefrigeratorMonitor:
                 raise
 
 
+# Function to monitor IR sensor in background
+def monitor_ir_sensor():
+    global ir_status, ir_pin, ir_monitoring_active
+    logger.info("Starting IR sensor monitoring thread")
+    
+    while ir_monitoring_active:
+        if ir_pin is not None:
+            ir_status = check_ir_sensor(ir_pin)
+            if ir_status:
+                logger.info("IR motion detected!")
+        time.sleep(0.1)  # Check every 100ms
+    
+    logger.info("IR sensor monitoring stopped")
+
+
+# Start IR sensor monitoring in a separate thread
+def start_ir_monitoring():
+    global ir_monitoring_active
+    if is_gpio_available() and not ir_monitoring_active:
+        ir_monitoring_active = True
+        ir_thread = threading.Thread(target=monitor_ir_sensor)
+        ir_thread.daemon = True  # Make thread terminate when main program exits
+        ir_thread.start()
+        logger.info("IR sensor monitoring thread started")
+
+
+# Stop IR sensor monitoring
+def stop_ir_monitoring():
+    global ir_monitoring_active
+    ir_monitoring_active = False
+    logger.info("IR sensor monitoring thread stopping")
+
+
 # Instantiate the monitor class
 monitor = RefrigeratorMonitor()
+
+# Start IR monitoring when app starts
+start_ir_monitoring()
 
 
 @app.route("/detect", methods=["GET"])
@@ -431,6 +482,23 @@ def remove_food():
             return jsonify({"error": f"Failed to remove items: {str(e)}"}), 500
 
 
+@app.route("/sensor-data", methods=["GET"])
+def get_sensor_data():
+    # Get DHT sensor data
+    dht_data = read_dht_sensor()
+    
+    # Add IR sensor status
+    sensor_data = {
+        "temperature": dht_data["temperature"],
+        "humidity": dht_data["humidity"],
+        "dht_status": dht_data["status"],
+        "motion_detected": ir_status,
+        "gpio_available": is_gpio_available()
+    }
+    
+    return jsonify(sensor_data)
+
+
 @app.route("/clear", methods=["POST"])
 def clear_items():
     global current_detected_items
@@ -438,5 +506,19 @@ def clear_items():
     return jsonify({"status": "success", "message": "Detected items cleared"}), 200
 
 
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    # Cleanup function for when the app shuts down
+    stop_ir_monitoring()
+    SessionLocal.remove()
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    try:
+        app.run(host="0.0.0.0", port=5000, debug=True)
+    finally:
+        # Make sure to clean up GPIO resources when the app exits
+        stop_ir_monitoring()
+        if is_gpio_available():
+            import RPi.GPIO as GPIO
+            GPIO.cleanup()
