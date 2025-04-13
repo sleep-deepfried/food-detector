@@ -85,7 +85,7 @@ class RefrigeratorMonitor:
             logger.error(f"Error in loading food categories: {e}")
         return categories
 
-    def detect_items_from_frame(self, frame, max_labels=10, min_confidence=80):
+    def detect_items_from_frame(self, frame, max_labels=5, min_confidence=95):
         global current_detected_items
         success, buffer = cv2.imencode(".jpg", frame)
         if not success:
@@ -137,7 +137,13 @@ class RefrigeratorMonitor:
 
     def add_items(self, items):
         current_time = datetime.utcnow()
-        expiration_days = {"Fruits": 7, "Vegetables": 10, "Meat": 3, "Dairy": 5}
+        expiration_days = {
+            "Fruits": 7,
+            "Vegetables": 10,
+            "Meat": 3,
+            "Dairy": 5,
+            "Pasry": 3,
+        }
         inventory = []
 
         # Use the session context manager to ensure proper session management
@@ -194,14 +200,14 @@ class RefrigeratorMonitor:
 def monitor_ir_sensor():
     global ir_status, ir_pin, ir_monitoring_active
     logger.info("Starting IR sensor monitoring thread")
-    
+
     while ir_monitoring_active:
         if ir_pin is not None:
             ir_status = check_ir_sensor(ir_pin)
             if ir_status:
                 logger.info("IR motion detected!")
         time.sleep(0.1)  # Check every 100ms
-    
+
     logger.info("IR sensor monitoring stopped")
 
 
@@ -233,8 +239,8 @@ start_ir_monitoring()
 @app.route("/detect", methods=["GET"])
 def detect_items():
     global current_camera, current_detected_items
-    max_labels = int(request.args.get("max_labels", 20))
-    min_confidence = float(request.args.get("min_confidence", 70))
+    max_labels = int(request.args.get("max_labels", 5))
+    min_confidence = float(request.args.get("min_confidence", 95))
 
     try:
         # Open the camera if it's not already open
@@ -274,6 +280,26 @@ def detect_items():
         detected_items = monitor.detect_items_from_frame(
             frame, max_labels, min_confidence
         )
+
+        # Check if no items were detected
+        if not detected_items:
+            logger.warning("No items detected in the current frame")
+            # Close the camera after detection attempt
+            if current_camera is not None and current_camera.isOpened():
+                current_camera.release()
+                current_camera = None
+                logger.info("Camera closed after detection attempt")
+
+            return (
+                jsonify(
+                    {
+                        "status": "warning",
+                        "message": "No items detected in the current frame. Try adjusting lighting, camera position, or reducing minimum confidence threshold.",
+                        "detected_items": [],
+                    }
+                ),
+                200,
+            )
 
         # Process detected items and update quantities
         updated_items = {}
@@ -486,16 +512,16 @@ def remove_food():
 def get_sensor_data():
     # Get DHT sensor data
     dht_data = read_dht_sensor()
-    
+
     # Add IR sensor status
     sensor_data = {
         "temperature": dht_data["temperature"],
         "humidity": dht_data["humidity"],
         "dht_status": dht_data["status"],
         "motion_detected": ir_status,
-        "gpio_available": is_gpio_available()
+        "gpio_available": is_gpio_available(),
     }
-    
+
     return jsonify(sensor_data)
 
 
@@ -521,4 +547,5 @@ if __name__ == "__main__":
         stop_ir_monitoring()
         if is_gpio_available():
             import RPi.GPIO as GPIO
+
             GPIO.cleanup()
