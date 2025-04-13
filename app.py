@@ -508,21 +508,21 @@ def remove_food():
             return jsonify({"error": f"Failed to remove items: {str(e)}"}), 500
 
 
-@app.route("/sensor-data", methods=["GET"])
-def get_sensor_data():
-    # Get DHT sensor data
-    dht_data = read_dht_sensor()
+# @app.route("/sensor-data", methods=["GET"])
+# def get_sensor_data():
+#     # Get DHT sensor data
+#     dht_data = read_dht_sensor()
 
-    # Add IR sensor status
-    sensor_data = {
-        "temperature": dht_data["temperature"],
-        "humidity": dht_data["humidity"],
-        "dht_status": dht_data["status"],
-        "motion_detected": ir_status,
-        "gpio_available": is_gpio_available(),
-    }
+#     # Add IR sensor status
+#     sensor_data = {
+#         "temperature": dht_data["temperature"],
+#         "humidity": dht_data["humidity"],
+#         "dht_status": dht_data["status"],
+#         "motion_detected": ir_status,
+#         "gpio_available": is_gpio_available(),
+#     }
 
-    return jsonify(sensor_data)
+#     return jsonify(sensor_data)
 
 
 @app.route("/clear", methods=["POST"])
